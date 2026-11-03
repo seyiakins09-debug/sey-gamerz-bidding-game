@@ -45,6 +45,24 @@ io.on("connection",socket=>{
  socket.on("player:join",({roomKey,nickname,startingCoins},cb)=>{const key=String(roomKey||"").trim().toUpperCase(),room=rooms.get(key),name=String(nickname||"").trim().slice(0,24),amount=Number(startingCoins);if(!room)return cb&&cb({ok:false,error:"Room Key not found. Check the key with your host."});if(room.status!=="lobby")return cb&&cb({ok:false,error:"The game has started. No more players can join."});if(name.length<2)return cb&&cb({ok:false,error:"Enter a nickname with at least 2 characters."});if(!Number.isSafeInteger(amount)||amount<0)return cb&&cb({ok:false,error:"Enter a valid starting coin amount."});if([...room.players.values()].some(p=>p.nickname.toLowerCase()===name.toLowerCase()))return cb&&cb({ok:false,error:"That nickname is already in this room."});const id=crypto.randomBytes(4).toString("hex").toUpperCase(),player={id,nickname:name,balance:amount,socketId:socket.id};room.players.set(id,player);socket.join(room.key);socket.data.playerRoom=room.key;socket.data.playerId=id;emitRoom(room);cb&&cb({ok:true,player:{id,nickname:name,balance:amount},room:publicRoom(room)})});
  socket.on("host:start",(_,cb)=>{const room=rooms.get(socket.data.hostRoom);if(!room||room.hostSocketId!==socket.id)return cb&&cb({ok:false,error:"Host access not found."});if(room.status!=="lobby")return cb&&cb({ok:false,error:"The game has already started."});if(!room.players.size)return cb&&cb({ok:false,error:"Wait for at least one player to join."});room.round=1;room.set=1;startRound(room);cb&&cb({ok:true})});
  socket.on("host:next",(_,cb)=>{const room=rooms.get(socket.data.hostRoom);if(!room||room.hostSocketId!==socket.id)return cb&&cb({ok:false,error:"Host access not found."});if(room.status!=="running"||!room.revealed)return cb&&cb({ok:false,error:"Wait for the current round to finish."});room.round++;room.set=Math.ceil(room.round/ROUNDS_PER_SET);startRound(room);cb&&cb({ok:true})});
+ socket.on("host:set",({setNumber},cb)=>{
+  const room=rooms.get(socket.data.hostRoom);
+  if(!room||room.hostSocketId!==socket.id)return cb&&cb({ok:false,error:"Host access not found."});
+  const n=Number(setNumber);
+  if(!Number.isInteger(n)||n<1||n>SETS)return cb&&cb({ok:false,error:"Choose a set from 1 to 10."});
+  if(room.highestBid&&!room.revealed)refundBid(room,room.highestBid);
+  stopTimer(room);room.round=(n-1)*ROUNDS_PER_SET+1;room.set=n;
+  room.message=`Host selected Set ${n}. Starting Round 1 of Set ${n}.`;
+  startRound(room);cb&&cb({ok:true});
+ });
+ socket.on("host:end",(_,cb)=>{
+  const room=rooms.get(socket.data.hostRoom);
+  if(!room||room.hostSocketId!==socket.id)return cb&&cb({ok:false,error:"Host access not found."});
+  if(room.highestBid&&!room.revealed)refundBid(room,room.highestBid);
+  stopTimer(room);room.status="finished";room.secondsLeft=0;
+  room.message="The host ended the game.";
+  emitRoom(room);cb&&cb({ok:true});
+ });
  socket.on("player:bid",({amount},cb)=>{const room=rooms.get(socket.data.playerRoom),player=room&&room.players.get(socket.data.playerId);if(!room||!player)return cb&&cb({ok:false,error:"You are not in a game room."});if(room.status!=="running"||room.revealed)return cb&&cb({ok:false,error:"Bidding is closed."});const bid=Number(amount);if(!Number.isSafeInteger(bid)||bid<=0)return cb&&cb({ok:false,error:"Enter a valid whole-number bid."});if(bid<STARTING_BID)return cb&&cb({ok:false,error:"The starting bid is 100,000 coins."});if(room.highestBid&&bid<=room.highestBid.amount)return cb&&cb({ok:false,error:"Your bid must be higher than the current highest bid."});
  // Release the player's previous active bid (if they are rebidding), then reserve the new bid immediately.
  const previousOwn=room.highestBid&&room.highestBid.playerId===player.id?room.highestBid:null;

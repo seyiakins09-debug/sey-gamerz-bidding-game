@@ -36,3 +36,4 @@ A standalone multiplayer bidding game built with Node.js, Express and Socket.IO.
 - Rooms and player data are held in memory; restarting the server clears active rooms.
 - Host control is tied to the host's current browser connection. If the host disconnects, create a new room.
 - This version has no account login or persistent database.
+\n\n## Latest update (v2)\n- Fixed player bid input rerender issue by preserving entered text and focus between live updates.\n- Added host set selector (Set 1–10) and GO TO SET action. Jump starts Round 1 of the selected set.\n- Added END GAME host action with confirmation.\n- Player bid field uses numeric mobile keyboard.\n
