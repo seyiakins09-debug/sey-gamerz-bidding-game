@@ -37,3 +37,13 @@ A standalone multiplayer bidding game built with Node.js, Express and Socket.IO.
 - Host control is tied to the host's current browser connection. If the host disconnects, create a new room.
 - This version has no account login or persistent database.
 \n\n## Latest update (v2)\n- Fixed player bid input rerender issue by preserving entered text and focus between live updates.\n- Added host set selector (Set 1–10) and GO TO SET action. Jump starts Round 1 of the selected set.\n- Added END GAME host action with confirmation.\n- Player bid field uses numeric mobile keyboard.\n
+
+## Financial settlement (updated)
+- Players begin with a fixed starting cash balance.
+- Accepted bids temporarily reserve coins; outbid bids are refunded.
+- When a player wins, the bid reservation is returned before settlement.
+- If item value is below the winning bid, only the difference is deducted from cash and recorded as Total Loss.
+- If item value is above the winning bid, the difference is recorded as Total Profit but is not added to cash and cannot be used for bidding.
+- If item value equals the winning bid, there is no profit or loss.
+- Cash Balance, Total Profit, and Total Loss are tracked separately. Net Result is not displayed or calculated.
+- Won items and round-by-round financial history are recorded separately.

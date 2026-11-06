@@ -20,15 +20,31 @@ const items = [
  ["High-End Camera Kit",480000,"📸"],["Classic Sports Car",7200000,"🏁"],["Luxury Perfume Collection",220000,"🧴"],["Designer Shoes Collection",350000,"👠"],["Exclusive Crystal Chandelier",800000,"💡"]
 ];
 function makeKey(){return crypto.randomBytes(3).toString("hex").toUpperCase()}
-function publicRoom(room){return {key:room.key,status:room.status,set:room.set,round:room.round,players:[...room.players.values()].map(p=>({id:p.id,nickname:p.nickname,balance:p.balance})),item:room.currentItem?{name:room.currentItem.name,icon:room.currentItem.icon,startingBid:STARTING_BID,actualValue:room.revealed?room.currentItem.value:null}:null,highestBid:room.highestBid,winner:room.winner,revealed:room.revealed,secondsLeft:room.secondsLeft,bids:room.bids,message:room.message}}
+function publicRoom(room){return {key:room.key,status:room.status,set:room.set,round:room.round,players:[...room.players.values()].map(p=>({id:p.id,nickname:p.nickname,balance:p.balance,startingBalance:p.startingBalance,totalProfit:p.totalProfit,totalLoss:p.totalLoss,winnings:p.winnings,history:p.history})),item:room.currentItem?{name:room.currentItem.name,icon:room.currentItem.icon,startingBid:STARTING_BID,actualValue:room.revealed?room.currentItem.value:null}:null,highestBid:room.highestBid,winner:room.winner,revealed:room.revealed,secondsLeft:room.secondsLeft,bids:room.bids,message:room.message}}
 function emitRoom(room){io.to(room.key).emit("room:update",publicRoom(room))}
 function stopTimer(room){if(room.timer)clearInterval(room.timer);room.timer=null}
 function refundBid(room,bid){if(!bid)return;const p=room.players.get(bid.playerId);if(p)p.balance+=bid.amount}
 function finishRound(room){
  if(room.status!=="running"||room.revealed)return;
  stopTimer(room);room.secondsLeft=0;room.revealed=true;
- if(room.highestBid){const winner=room.players.get(room.highestBid.playerId);if(winner){room.winner={nickname:winner.nickname,playerId:winner.id,amount:room.highestBid.amount,itemName:room.currentItem.name};room.message=`${winner.nickname} wins ${room.currentItem.name} for ${room.highestBid.amount.toLocaleString()} coins!`}}
- else {room.winner=null;room.message="No valid bids this round. The item was not sold."}
+ if(room.highestBid){
+  const winningBid=room.highestBid;
+  const winner=room.players.get(winningBid.playerId);
+  if(winner){
+   const value=room.currentItem.value, bid=winningBid.amount;
+   const profit=Math.max(0,value-bid), loss=Math.max(0,bid-value);
+   // Return the temporary bid reservation. Deduct only the loss from cash.
+   winner.balance+=bid;
+   if(loss>0)winner.balance-=loss;
+   winner.totalProfit+=profit; winner.totalLoss+=loss;
+   const setNumber=Math.ceil(room.round/ROUNDS_PER_SET);
+   const record={round:room.round,set:setNumber,itemName:room.currentItem.name,itemValue:value,winningBid:bid,profit,loss,timestamp:Date.now()};
+   winner.winnings.push({itemName:room.currentItem.name,itemValue:value,winningBid:bid,round:room.round,set:setNumber});
+   winner.history.unshift(record);
+   room.winner={nickname:winner.nickname,playerId:winner.id,amount:bid,itemName:room.currentItem.name,actualValue:value,profit,loss,cashBalance:winner.balance,totalProfit:winner.totalProfit,totalLoss:winner.totalLoss};
+   room.message=loss>0?`${winner.nickname} wins ${room.currentItem.name}. Loss recorded: ${loss.toLocaleString()} coins.`:profit>0?`${winner.nickname} wins ${room.currentItem.name}. Profit recorded: ${profit.toLocaleString()} coins (not added to cash balance).`:`${winner.nickname} wins ${room.currentItem.name}. No profit or loss.`;
+  }
+ }else{room.winner=null;room.message="No valid bids this round. The item was not sold."}
  if(room.round>=SETS*ROUNDS_PER_SET){room.status="finished";room.message=(room.winner?room.message+" ":"")+"Game complete! All 10 sets and 100 rounds have finished."}
  emitRoom(room);
 }
@@ -42,7 +58,7 @@ function newRoom(hostSocketId){let key;do{key=makeKey()}while(rooms.has(key));co
 io.on("connection",socket=>{
  socket.on("host:create",(_,cb)=>{const room=newRoom(socket.id);socket.join(room.key);socket.data.hostRoom=room.key;cb&&cb({ok:true,roomKey:room.key,room:publicRoom(room)})});
  socket.on("host:resume",({roomKey},cb)=>{const room=rooms.get(String(roomKey||"").toUpperCase());if(!room||room.hostSocketId!==socket.id)return cb&&cb({ok:false,error:"This host session is not available on this connection. Create a new room."});socket.join(room.key);socket.data.hostRoom=room.key;cb&&cb({ok:true,room:publicRoom(room)})});
- socket.on("player:join",({roomKey,nickname,startingCoins},cb)=>{const key=String(roomKey||"").trim().toUpperCase(),room=rooms.get(key),name=String(nickname||"").trim().slice(0,24),amount=Number(startingCoins);if(!room)return cb&&cb({ok:false,error:"Room Key not found. Check the key with your host."});if(room.status!=="lobby")return cb&&cb({ok:false,error:"The game has started. No more players can join."});if(name.length<2)return cb&&cb({ok:false,error:"Enter a nickname with at least 2 characters."});if(!Number.isSafeInteger(amount)||amount<0)return cb&&cb({ok:false,error:"Enter a valid starting coin amount."});if([...room.players.values()].some(p=>p.nickname.toLowerCase()===name.toLowerCase()))return cb&&cb({ok:false,error:"That nickname is already in this room."});const id=crypto.randomBytes(4).toString("hex").toUpperCase(),player={id,nickname:name,balance:amount,socketId:socket.id};room.players.set(id,player);socket.join(room.key);socket.data.playerRoom=room.key;socket.data.playerId=id;emitRoom(room);cb&&cb({ok:true,player:{id,nickname:name,balance:amount},room:publicRoom(room)})});
+ socket.on("player:join",({roomKey,nickname,startingCoins},cb)=>{const key=String(roomKey||"").trim().toUpperCase(),room=rooms.get(key),name=String(nickname||"").trim().slice(0,24),amount=Number(startingCoins);if(!room)return cb&&cb({ok:false,error:"Room Key not found. Check the key with your host."});if(room.status!=="lobby")return cb&&cb({ok:false,error:"The game has started. No more players can join."});if(name.length<2)return cb&&cb({ok:false,error:"Enter a nickname with at least 2 characters."});if(!Number.isSafeInteger(amount)||amount<0)return cb&&cb({ok:false,error:"Enter a valid starting coin amount."});if([...room.players.values()].some(p=>p.nickname.toLowerCase()===name.toLowerCase()))return cb&&cb({ok:false,error:"That nickname is already in this room."});const id=crypto.randomBytes(4).toString("hex").toUpperCase(),player={id,nickname:name,balance:amount,startingBalance:amount,totalProfit:0,totalLoss:0,winnings:[],history:[],socketId:socket.id};room.players.set(id,player);socket.join(room.key);socket.data.playerRoom=room.key;socket.data.playerId=id;emitRoom(room);cb&&cb({ok:true,player:{id,nickname:name,balance:amount,startingBalance:amount,totalProfit:0,totalLoss:0,winnings:[],history:[]},room:publicRoom(room)})});
  socket.on("host:start",(_,cb)=>{const room=rooms.get(socket.data.hostRoom);if(!room||room.hostSocketId!==socket.id)return cb&&cb({ok:false,error:"Host access not found."});if(room.status!=="lobby")return cb&&cb({ok:false,error:"The game has already started."});if(!room.players.size)return cb&&cb({ok:false,error:"Wait for at least one player to join."});room.round=1;room.set=1;startRound(room);cb&&cb({ok:true})});
  socket.on("host:next",(_,cb)=>{const room=rooms.get(socket.data.hostRoom);if(!room||room.hostSocketId!==socket.id)return cb&&cb({ok:false,error:"Host access not found."});if(room.status!=="running"||!room.revealed)return cb&&cb({ok:false,error:"Wait for the current round to finish."});room.round++;room.set=Math.ceil(room.round/ROUNDS_PER_SET);startRound(room);cb&&cb({ok:true})});
  socket.on("host:set",({setNumber},cb)=>{
